@@ -122,7 +122,13 @@ contactForm.addEventListener('submit', async (e) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     });
-    const result = await res.json();
+    const text = await res.text();
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch {
+      throw new Error(`Server error (${res.status}). Server might be restarting.`);
+    }
     if (res.ok && result.success) {
       formStatus.textContent = 'Thank you! We will contact you within 24 hours.';
       formStatus.className = 'form-status success';

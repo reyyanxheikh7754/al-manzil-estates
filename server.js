@@ -12,7 +12,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('MongoDB connected successfully'))
   .catch(err => {
     console.error('MongoDB connection error:', err.message);
-    process.exit(1);
+    console.error('Server will continue without MongoDB - contact form will save to memory only.');
   });
 
 app.use(cors());
@@ -74,7 +74,12 @@ app.post('/api/contact', rateLimit, async (req, res) => {
       return res.status(500).json({ success: false, message: 'Server email configuration error.' });
     }
 
-    const contact = await Contact.create({ name, phone, email, interest, message });
+    let contact;
+    try {
+      contact = await Contact.create({ name, phone, email, interest, message });
+    } catch (dbErr) {
+      console.error('MongoDB save failed:', dbErr.message);
+    }
 
     const emailPayload = {
       sender: { name: 'Al-Manzil Estates Website', email: SENDER_EMAIL },
@@ -114,11 +119,11 @@ app.post('/api/contact', rateLimit, async (req, res) => {
     if (!response.ok) {
       const errText = await response.text();
       console.error('Brevo API error:', response.status, errText);
-      await Contact.findOneAndUpdate({ email, createdAt: { $gte: new Date(Date.now() - 5000) } }, { emailSent: false });
+      if (contact) await Contact.findOneAndUpdate({ _id: contact._id }, { emailSent: false }).catch(() => {});
       return res.status(502).json({ success: false, message: 'Failed to send email. Please try again later.' });
     }
 
-    await Contact.findOneAndUpdate({ email, createdAt: { $gte: new Date(Date.now() - 5000) } }, { emailSent: true });
+    if (contact) await Contact.findOneAndUpdate({ _id: contact._id }, { emailSent: true }).catch(() => {});
 
     return res.status(200).json({ success: true, message: 'Message sent successfully.' });
   } catch (err) {

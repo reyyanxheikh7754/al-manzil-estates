@@ -3,22 +3,34 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
-const Contact = require('./models/Contact');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('MongoDB connected successfully'))
-  .catch(err => {
-    console.error('MongoDB connection error:', err.message);
-    console.error('Server will continue without MongoDB - contact form will save to memory only.');
-  });
+const MONGODB_URI = process.env.MONGODB_URI;
+let dbConnected = false;
+
+if (MONGODB_URI) {
+  mongoose.connect(MONGODB_URI)
+    .then(() => {
+      dbConnected = true;
+      console.log('MongoDB connected');
+    })
+    .catch(err => {
+      console.error('MongoDB error:', err.message);
+    });
+} else {
+  console.log('No MONGODB_URI set - running without database');
+}
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+const Contact = MONGODB_URI
+  ? require('./models/Contact')
+  : null;
 
 const requestLog = new Map();
 function rateLimit(req, res, next) {
@@ -28,7 +40,7 @@ function rateLimit(req, res, next) {
   const maxRequests = 20;
   const timestamps = (requestLog.get(ip) || []).filter(t => now - t < windowMs);
   if (timestamps.length >= maxRequests) {
-    return res.status(429).json({ success: false, message: 'Too many requests. Please try again in a minute.' });
+    return res.status(429).json({ success: false, message: 'Too many requests. Try again later.' });
   }
   timestamps.push(now);
   requestLog.set(ip, timestamps);
@@ -54,31 +66,30 @@ function escapeHtml(str = '') {
 }
 
 app.post('/api/contact', rateLimit, async (req, res) => {
-  console.log('--- New contact form submission ---');
+  console.log('--- Contact form submission ---');
   try {
     const { name, phone, email, interest, message } = req.body;
-    console.log('Received:', { name, phone, email, interest, message: message?.substring(0, 50) });
     const errors = validateContactData({ name, phone, email, message });
     if (errors.length > 0) {
-      console.log('Validation errors:', errors);
       return res.status(400).json({ success: false, message: errors.join(' ') });
     }
 
     const BREVO_API_KEY = process.env.BREVO_API_KEY;
     const RECEIVER_EMAIL = process.env.RECEIVER_EMAIL;
     const SENDER_EMAIL = process.env.SENDER_EMAIL;
-    console.log('Env check:', { hasKey: !!BREVO_API_KEY, receiver: RECEIVER_EMAIL, sender: SENDER_EMAIL });
 
     if (!BREVO_API_KEY || !RECEIVER_EMAIL || !SENDER_EMAIL) {
-      console.error('Missing Brevo env variables.');
-      return res.status(500).json({ success: false, message: 'Server email configuration error.' });
+      console.error('Missing Brevo env variables');
+      return res.status(500).json({ success: false, message: 'Server email config error.' });
     }
 
-    let contact;
-    try {
-      contact = await Contact.create({ name, phone, email, interest, message });
-    } catch (dbErr) {
-      console.error('MongoDB save failed:', dbErr.message);
+    let contact = null;
+    if (Contact && dbConnected) {
+      try {
+        contact = await Contact.create({ name, phone, email, interest, message });
+      } catch (dbErr) {
+        console.error('DB save failed:', dbErr.message);
+      }
     }
 
     const emailPayload = {
@@ -118,12 +129,12 @@ app.post('/api/contact', rateLimit, async (req, res) => {
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('Brevo API error:', response.status, errText);
-      if (contact) await Contact.findOneAndUpdate({ _id: contact._id }, { emailSent: false }).catch(() => {});
-      return res.status(502).json({ success: false, message: 'Failed to send email. Please try again later.' });
+      console.error('Brevo error:', response.status, errText);
+      if (contact) contact.emailSent = false, await contact.save().catch(() => {});
+      return res.status(502).json({ success: false, message: 'Failed to send email.' });
     }
 
-    if (contact) await Contact.findOneAndUpdate({ _id: contact._id }, { emailSent: true }).catch(() => {});
+    if (contact) contact.emailSent = true, await contact.save().catch(() => {});
 
     return res.status(200).json({ success: true, message: 'Message sent successfully.' });
   } catch (err) {
@@ -133,10 +144,13 @@ app.post('/api/contact', rateLimit, async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', db: dbConnected, timestamp: new Date().toISOString() });
 });
 
 app.get('/api/contacts', async (req, res) => {
+  if (!Contact || !dbConnected) {
+    return res.status(503).json({ success: false, message: 'Database not connected.' });
+  }
   try {
     const contacts = await Contact.find().sort({ createdAt: -1 });
     res.json({ success: true, count: contacts.length, data: contacts });
@@ -150,6 +164,6 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });

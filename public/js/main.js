@@ -93,7 +93,9 @@ document.getElementById('testiTrack').innerHTML = testimonials.map(t => `
   </div>
 `).join('');
 
-const API_BASE = 'http://localhost:3000';
+const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:3000'
+  : window.location.origin;
 
 const contactForm = document.getElementById('contactForm');
 const submitBtn = document.getElementById('submitBtn');

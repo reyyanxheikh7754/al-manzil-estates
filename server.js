@@ -65,6 +65,21 @@ function escapeHtml(str = '') {
     .replace(/'/g, '&#039;');
 }
 
+app.get('/sitemap.xml', (req, res) => {
+  const baseUrl = process.env.SITE_URL || `${req.protocol}://${req.get('host')}`;
+  const today = new Date().toISOString().split('T')[0];
+  res.set('Content-Type', 'application/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>${baseUrl}/</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>`);
+});
+
 app.post('/api/contact', rateLimit, async (req, res) => {
   console.log('--- Contact form submission ---');
   try {

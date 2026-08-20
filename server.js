@@ -145,8 +145,15 @@ app.post('/api/contact', rateLimit, async (req, res) => {
     if (!response.ok) {
       const errText = await response.text();
       console.error('Brevo error:', response.status, errText);
+      let detail = 'Failed to send email.';
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.message) detail = errJson.message;
+        else if (errJson.code === 'invalid_sender') detail = 'Sender email is not verified in Brevo. Please verify ' + SENDER_EMAIL + ' in your Brevo dashboard.';
+      } catch {}
+      if (response.status === 401 || response.status === 403) detail = 'Invalid or expired Brevo API key.';
       if (contact) contact.emailSent = false, await contact.save().catch(() => {});
-      return res.status(502).json({ success: false, message: 'Failed to send email.' });
+      return res.status(502).json({ success: false, message: detail });
     }
 
     if (contact) contact.emailSent = true, await contact.save().catch(() => {});
